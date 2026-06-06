@@ -1,63 +1,54 @@
 /**
- * tenet x402 Client (custodial / sponsored asker)
- * -----------------------------------------------
- * A tenet asker: it queries the network for an expert, then routes a query
- * through the mixnet. With x402 the query costs 0.10 USDC, earned by the
- * **expert** that answers — settled privately via the Obscura shielded pool so
- * the payout cannot be linked back to this asker (see ../tenet-integration).
+ * tenet x402 Client — dual custody + tiered sponsorship
+ * -----------------------------------------------------
+ * A tenet asker. Every query costs a flat 0.10 USDC, earned by the expert that
+ * answers. How that 0.10 (and the ALGO network fee) is funded depends on the
+ * user:
  *
- * Custodial + sponsored launch model:
- *   - Custodial: this client signs with a managed wallet (AVM_MNEMONIC held by
- *     the tenet service on the asker's behalf). End users do not manage keys.
- *   - Sponsored: the operator funds the query credit (USDC) and the facilitator
- *     (../facilitator) covers ALGO fees, so askers need no funds at launch.
+ *   - No wallet  -> MANAGED CUSTODIAL: the operator runs a wallet for the user
+ *     and funds everything. Always sponsored.
+ *   - Has wallet -> SELF-CUSTODY: the operator sponsors the user's network fee
+ *     + 0.10 USDC app fee for the FIRST 5 queries. From the 6th query on, the
+ *     user "sends their own ticket" — they pay from their own wallet.
  *
- * The client talks to a routing hop, which forwards opaquely to the expert; the
- * 402 challenge and the signed voucher travel end-to-end between this client and
- * the expert, exactly as they would be sealed inside the tenet envelope.
+ * The per-user sponsorship counter is kept by the operator (the facilitator
+ * service, GET /sponsorship and POST /sponsorship/consume).
  */
 
 import { config } from 'dotenv';
 import { x402Client, wrapFetchWithPayment, x402HTTPClient } from '@x402/fetch';
-import { toClientAvmSigner } from '@x402/avm';
 import { ExactAvmScheme } from '@x402/avm/exact/client';
-import {
-  ed25519SigningKeyFromWrappedSecret,
-  type WrappedEd25519Seed,
-} from '@algorandfoundation/algokit-utils/crypto';
-import { seedFromMnemonic } from '@algorandfoundation/algokit-utils/algo25';
+import { managedWallet, selfWallet, type TenetWallet } from './wallet.js';
 
 config();
 
-// Custodial wallet the tenet service operates on the asker's behalf.
-const avmMnemonic = process.env.AVM_MNEMONIC;
-const hopUrl = process.env.HOP_URL ?? process.env.RELAY_URL ?? 'http://localhost:4030';
+const userId = process.env.USER_ID ?? 'user-demo';
+const userMnemonic = process.env.AVM_MNEMONIC; // present => the user has their own wallet
+const operatorMnemonic = process.env.OPERATOR_MNEMONIC; // operator's sponsoring/custodial wallet
+const hopUrl = process.env.HOP_URL ?? 'http://localhost:4030';
+const facilitatorUrl = process.env.FACILITATOR_URL ?? 'http://localhost:4022';
 const prompt = process.env.PROMPT ?? 'In one sentence, name one Monet painting technique.';
-
-if (!avmMnemonic) {
-  throw new Error('Missing AVM_MNEMONIC (custodial signing wallet) in your .env file.');
-}
 
 async function main(): Promise<void> {
   // 1. Discover an expert and the flat query price (free).
-  const matchRes = await fetch(`${hopUrl}/v1/match`);
-  const match = await matchRes.json();
+  const match = await (await fetch(`${hopUrl}/v1/match`)).json();
   const expert = match.experts?.[0];
   console.log(
-    `🔎 discovered expert peer_id=${expert?.peer_id} via hop=${match.hop?.hop_id} ` +
+    `🔎 expert peer_id=${expert?.peer_id} via hop=${match.hop?.hop_id} ` +
       `price=${match.payment?.price} payee=${match.payment?.payee_hint}`,
   );
 
-  // 2. Build the custodial signer.
-  const secretKey = await getSecretKeyFromMnemonic(avmMnemonic!);
-  const avmSigner = toClientAvmSigner(secretKey);
-  console.info(`💼 custodial signer: ${avmSigner.address}`);
+  // 2. Decide who pays this query: managed, sponsored self, or self-funded.
+  const { wallet, sponsored } = await resolvePayer();
+  const banner = !userMnemonic
+    ? `managed custodial wallet (operator-run) — sponsored`
+    : sponsored
+      ? `self-custody, within free tier — operator sponsoring fee + 0.10 USDC`
+      : `self-custody, free tier used up — sending your own ticket (self-paid)`;
+  console.log(`👤 user=${userId} mode=${wallet.mode} payer=${wallet.address}\n   ${banner}`);
 
-  const client = new x402Client().register('algorand:*', new ExactAvmScheme(avmSigner));
-
-  // 3. Route the query through the mixnet hop, authorizing 0.10 USDC.
-  //    The voucher is verified by the expert; production settlement is an
-  //    Obscura withdrawal to the expert, not a direct transfer from this asker.
+  // 3. Pay/authorize and route the query through the mixnet hop.
+  const client = new x402Client().register('algorand:*', new ExactAvmScheme(wallet.signer));
   const fetchWithPayment = wrapFetchWithPayment(fetch, client);
   const response = await fetchWithPayment(`${hopUrl}/v1/answer`, {
     method: 'POST',
@@ -74,27 +65,54 @@ async function main(): Promise<void> {
   const settle = new x402HTTPClient(client).getPaymentSettleResponse(name =>
     response.headers.get(name),
   );
-  if (settle) {
-    console.log('\n💳 query authorized (expert payee):', JSON.stringify(settle, null, 2));
+  if (settle) console.log('\n💳 settled:', JSON.stringify(settle, null, 2));
+
+  // 4. If this was a sponsored query for a self-custody user, burn one of the
+  //    5 free credits. Managed users are unlimited (the operator runs them).
+  if (sponsored && userMnemonic) {
+    const after = await consumeSponsorship();
+    console.log(`🎟️  free queries left: ${after.remaining}/${after.limit}`);
   }
 
   const answer = await response.json();
   console.log('\n✅ answer:', JSON.stringify(answer, null, 2));
 }
 
-// Base64-encoded signing key for @x402/avm: 32-byte seed + 32-byte public key.
-async function getSecretKeyFromMnemonic(mnemonic: string): Promise<string> {
-  const seed = seedFromMnemonic(mnemonic);
-  const seedCopy = new Uint8Array(seed);
-  const wrappedSeed: WrappedEd25519Seed = {
-    unwrapEd25519Seed: async () => seed,
-    wrapEd25519Seed: async () => {},
-  };
-  const wrappedSecret = await ed25519SigningKeyFromWrappedSecret(wrappedSeed);
-  return Buffer.concat([
-    Buffer.from(seedCopy),
-    Buffer.from(wrappedSecret.ed25519Pubkey),
-  ]).toString('base64');
+async function resolvePayer(): Promise<{ wallet: TenetWallet; sponsored: boolean }> {
+  // No wallet -> managed custodial, always operator-funded.
+  if (!userMnemonic) {
+    if (!operatorMnemonic) throw new Error('Managed user requires OPERATOR_MNEMONIC.');
+    return { wallet: await managedWallet(operatorMnemonic, userId), sponsored: true };
+  }
+
+  // Has wallet -> sponsored for the first 5 queries, then self-funded.
+  const status = await getSponsorship();
+  if (status.sponsored) {
+    if (!operatorMnemonic) throw new Error('Sponsored query requires OPERATOR_MNEMONIC.');
+    return { wallet: await managedWallet(operatorMnemonic, userId), sponsored: true };
+  }
+  return { wallet: await selfWallet(userMnemonic), sponsored: false };
+}
+
+interface SponsorshipStatus {
+  used: number;
+  limit: number;
+  remaining: number;
+  sponsored: boolean;
+}
+
+async function getSponsorship(): Promise<SponsorshipStatus> {
+  return (await fetch(`${facilitatorUrl}/sponsorship?user=${encodeURIComponent(userId)}`)).json();
+}
+
+async function consumeSponsorship(): Promise<SponsorshipStatus> {
+  return (
+    await fetch(`${facilitatorUrl}/sponsorship/consume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ user: userId }),
+    })
+  ).json();
 }
 
 main().catch(error => {

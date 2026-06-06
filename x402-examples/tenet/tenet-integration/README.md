@@ -10,6 +10,9 @@ network (`maceip/sphinx-tahoe`).
   make `maceip/anonymous-usdc-algo` (Obscura) move **USDC** instead of ALGO, and
   why the *depositor ≠ withdrawer* case is handled by keeping settlement
   operator-side (Obscura's native same-secret model).
+- **[SPONSORSHIP.md](SPONSORSHIP.md)** — custody modes (managed vs self-custody)
+  and the tiered sponsorship policy (first 5 queries free per self-custody user,
+  then they send their own ticket).
 - **[tenet_x402.py](tenet_x402.py)** — dependency-light reference scaffolding to
   port into `tenet/payments/`: the envelope extension and the operator-side
   Obscura settlement wrapper.

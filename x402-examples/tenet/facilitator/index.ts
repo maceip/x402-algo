@@ -54,6 +54,38 @@ facilitator.register(ALGORAND_TESTNET_CAIP2, new ExactAvmScheme(avmSigner));
 const app = express();
 app.use(express.json());
 
+// --------------------------------------------------------------------------- //
+// Sponsorship ledger (operator policy)
+// --------------------------------------------------------------------------- //
+// Self-custody users get the first SPONSORED_LIMIT queries fee-and-app sponsored;
+// after that they pay from their own wallet. Managed (no-wallet) users are run by
+// the operator and are not metered here. In-memory for the demo — back this with
+// a real store in production.
+const SPONSORED_LIMIT = Number(process.env.SPONSORED_LIMIT ?? 5);
+const sponsoredUsed = new Map<string, number>();
+
+function sponsorshipStatus(user: string) {
+  const used = sponsoredUsed.get(user) ?? 0;
+  return {
+    user,
+    used,
+    limit: SPONSORED_LIMIT,
+    remaining: Math.max(0, SPONSORED_LIMIT - used),
+    sponsored: used < SPONSORED_LIMIT,
+  };
+}
+
+app.get('/sponsorship', (req, res) => {
+  res.json(sponsorshipStatus(String(req.query.user ?? '')));
+});
+
+app.post('/sponsorship/consume', (req, res) => {
+  const user = String(req.body?.user ?? '');
+  if (!user) return res.status(400).json({ error: 'missing user' });
+  sponsoredUsed.set(user, (sponsoredUsed.get(user) ?? 0) + 1);
+  res.json(sponsorshipStatus(user));
+});
+
 app.post('/verify', async (req, res) => {
   try {
     const { paymentPayload, paymentRequirements } = req.body as {
@@ -98,6 +130,7 @@ app.get('/supported', async (_req, res) => {
 
 app.listen(parseInt(PORT), () => {
   console.log(`🚀 Sponsored facilitator listening on http://localhost:${PORT}`);
+  console.log(`   sponsoring first ${SPONSORED_LIMIT} queries per self-custody user`);
 });
 
 async function getSecretKeyFromMnemonic(mnemonic: string): Promise<string> {

@@ -19,8 +19,11 @@ to the expert.
   the expert, so only the expert (the one node that decrypts) verifies it. No
   paywall on the relay.
 - **Expert is the payee.** The 0.10 USDC is the expert's fee.
-- **Custodial + sponsored.** The operator manages client wallets and funds both
-  the USDC query credit and the ALGO network fees. End users hold no keys.
+- **Dual custody + tiered sponsorship.** A user with **no wallet** gets a
+  **managed custodial** wallet the operator runs and fully funds. A user with
+  **their own wallet** keeps custody and is sponsored (network fee + 0.10 USDC)
+  for their **first 5 queries**, then **sends their own ticket** (self-funds).
+  See [`tenet-integration/SPONSORSHIP.md`](tenet-integration/SPONSORSHIP.md).
 
 ## Why settlement is Obscura, not a direct transfer
 
@@ -37,8 +40,8 @@ the payout is unlinkable to the deposit that funded it. See
 |---|---|---|
 | `expert/` | x402 resource server = the expert; verifies the voucher, answers, is the payee | 4031 |
 | `relay/` | a tenet routing hop; forwards opaque bytes, **not** a payee | 4030 |
-| `client/` | custodial + sponsored asker; discovers an expert and authorizes 0.10 USDC | — |
-| `facilitator/` | sponsored facilitator; verifies + covers ALGO fees | 4022 |
+| `client/` | asker with dual-mode wallet (managed vs self) + tiered sponsorship | — |
+| `facilitator/` | sponsored facilitator + per-user sponsorship ledger | 4022 |
 | `tenet-integration/` | the protocol spec, Obscura→USDC change set, and Python reference | — |
 
 > Note: the local TS demo uses x402's standard on-chain settlement so it runs
@@ -59,8 +62,13 @@ cd ../expert && pnpm install && pnpm start              # :4031
 # 3. routing hop (set EXPERT_URL=http://localhost:4031)
 cd ../relay && pnpm install && pnpm start               # :4030
 
-# 4. asker (set AVM_MNEMONIC custodial wallet, HOP_URL=http://localhost:4030)
+# 4. asker — set OPERATOR_MNEMONIC + HOP_URL + FACILITATOR_URL.
+#    Leave AVM_MNEMONIC empty for a MANAGED user (operator runs the wallet),
+#    or set it for a SELF-CUSTODY user (sponsored 5 queries, then self-pays).
 cd ../client && pnpm install && pnpm start
 ```
+
+Run the self-custody client 6+ times (same `USER_ID`) to watch it graduate from
+sponsored to "send your own ticket" after the 5th query.
 
 **Prerequisites:** Algorand TestNet accounts with ALGO and USDC (ASA `10458941`).

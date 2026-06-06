@@ -10,6 +10,9 @@ network (`maceip/sphinx-tahoe`).
   make `maceip/anonymous-usdc-algo` (Obscura) move **USDC** instead of ALGO, and
   why the *depositor ≠ withdrawer* case is handled by keeping settlement
   operator-side (Obscura's native same-secret model).
+- **[TRANSPORT.md](TRANSPORT.md)** — the WebTransport binding: every peer is its
+  own x402 endpoint over HTTP/3, so there is no central server (and managed
+  clients are browser-reachable). tenet already has the H3/aioquic stack.
 - **[SPONSORSHIP.md](SPONSORSHIP.md)** — custody modes (managed vs self-custody)
   and the tiered sponsorship policy (first 5 queries free per self-custody user,
   then they send their own ticket).

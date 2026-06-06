@@ -44,9 +44,13 @@ the payout is unlinkable to the deposit that funded it. See
 | `facilitator/` | sponsored facilitator + per-user sponsorship ledger | 4022 |
 | `tenet-integration/` | the protocol spec, Obscura→USDC change set, and Python reference | — |
 
-> Note: the local TS demo uses x402's standard on-chain settlement so it runs
-> end-to-end on its own. Production swaps that settlement step for the
-> Obscura-backed flow in the spec — the request-time x402 layer is identical.
+> Note: the local TS demo uses HTTP/1.1 servers and x402's standard on-chain
+> settlement so it runs end-to-end on its own. In tenet there is **no central
+> server** — each handler is hosted by a **peer over WebTransport** (HTTP/3),
+> which tenet already has the stack for; see
+> [`tenet-integration/TRANSPORT.md`](tenet-integration/TRANSPORT.md). The
+> request-time x402 layer is identical over either carrier. Production also swaps
+> the settlement step for the Obscura-backed flow in the spec.
 
 ## Run the local demo (Algorand TestNet)
 

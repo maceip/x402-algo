@@ -13,6 +13,8 @@ This repository focuses on **API monetization** — one powerful use case of x40
 
 **Want to see patterns?** Browse **x402-examples/** — five client implementations (fetch, axios, custom, advanced, MCP) plus reference servers.
 
+**Building a p2p / agent network?** See **x402-examples/tenet/** — an integration that adds paid, privacy-preserving expert queries to the [tenet](https://github.com/maceip/sphinx-tahoe) mixnet: a flat 0.10 USDC per query, paid to the expert, settled through the [Obscura](https://github.com/maceip/anonymous-usdc-algo) USDC shielded pool so the payment never re-links asker to expert. Custodial + sponsored at launch.
+
 **Prerequisites:** Algorand TestNet account with ALGO and USDC.
 
 ## Payment Flow
